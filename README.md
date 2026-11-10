@@ -43,6 +43,15 @@ A plain request is cut off after 15 minutes. For longer agent runs, submit the q
 - One request runs one agent. For Dev, Ops and Tester agents, deploy one service each, or put the role in the prompt.
 - Pin a different pi or Node version in `pipeline.py` (`PI_VERSION`, `NODE_VERSION`).
 
+## Work on it with an agent
+
+`AGENTS.md` tells coding agents (pi, Claude Code, Cursor) how this repo works; `CLAUDE.md` points to it. Agents get platform access (traces, logs, deployments, docs) in two ways:
+
+- MCP clients load `.mcp.json`, which connects to `https://api.cloud.deepset.ai/mcp` with `DEEPSET_API_KEY`.
+- pi has no MCP, so it calls the same tools from the shell: `python tools/mcp_call.py` lists them, `python tools/mcp_call.py <tool> '<json args>'` calls one.
+
+The `debug-service` skill (`.agents/skills/`, linked into `.claude/skills/`) walks an agent from a failed run to its cause. Copy `.env.example` to `.env` and fill it in first.
+
 ## Test
 
 ```sh
