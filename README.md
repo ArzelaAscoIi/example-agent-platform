@@ -40,7 +40,7 @@ A plain request is cut off after 15 minutes. For longer agent runs, submit the q
 ## Limits
 
 - Files on disk are lost when a run restarts on a new pod. Keep state that must survive (results, agent-to-agent messages) behind an API.
-- One request runs one agent. For Dev, Ops and Tester agents, deploy one service each, or put the role in the prompt.
+- One request runs one agent. For agents with different roles, deploy one service each, or put the role in the prompt.
 - Pin a different pi or Node version in `pipeline.py` (`PI_VERSION`, `NODE_VERSION`).
 
 ## Work on it with an agent
