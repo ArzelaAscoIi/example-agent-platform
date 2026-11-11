@@ -5,10 +5,17 @@ import subprocess
 
 import pipeline
 
+# A fake pi: makes its --session-dir ($6), then prints one JSON-mode answer event.
+FAKE_PI = """#!/bin/sh
+mkdir -p "$6"
+{extra}
+printf '{{"type":"message_end","message":{{"role":"assistant","content":[{{"type":"text","text":"%s"}}]}}}}\\n' "{answer}"
+"""
+
 
 def test_runs_pi_in_a_clone(tmp_path, monkeypatch):
     fake = tmp_path / "pi"
-    fake.write_text('#!/bin/sh\nmkdir -p "$6"\necho "cwd=$(basename "$PWD") prompt=$2 $7"\n')
+    fake.write_text(FAKE_PI.format(extra="", answer='cwd=$(basename "$PWD") prompt=$2 $(echo "$@" | grep -o -- --continue)'))
     fake.chmod(0o755)
     monkeypatch.setattr(pipeline, "PI_BIN", fake)
     monkeypatch.setattr(pipeline, "ensure_pi", lambda: None)
@@ -41,7 +48,7 @@ def test_pi_never_sees_the_pods_aws_role(monkeypatch, tmp_path):
 
 def test_follow_up_on_a_session_continues_in_the_same_clone(tmp_path, monkeypatch):
     fake = tmp_path / "pi"
-    fake.write_text('#!/bin/sh\nmkdir -p "$6"\ntouch made-by-pi\necho "prompt=$2 $7"\n')
+    fake.write_text(FAKE_PI.format(extra="touch made-by-pi", answer='prompt=$2 $(echo "$@" | grep -o -- --continue)'))
     fake.chmod(0o755)
     monkeypatch.setattr(pipeline, "PI_BIN", fake)
     monkeypatch.setattr(pipeline, "ensure_pi", lambda: None)
@@ -56,3 +63,38 @@ def test_follow_up_on_a_session_continues_in_the_same_clone(tmp_path, monkeypatc
     second = pipeline.PiAgent().run(json.dumps({"prompt": "adjust it", "repo": str(src)}))
     assert second["messages"][0].text == "prompt=adjust it --continue"
     assert (tmp_path / "session" / "repo" / "made-by-pi").exists()  # same clone, not re-cloned
+
+
+def test_tool_calls_become_agent_spans(tmp_path, monkeypatch):
+    events = [
+        {"type": "turn_start"},
+        {"type": "message_start", "message": {"role": "assistant"}},
+        {"type": "message_end", "message": {"role": "assistant", "content": [{"type": "toolCall", "name": "bash"}]}},
+        {"type": "tool_execution_start", "toolCallId": "t1", "toolName": "bash", "args": {"command": "ls"}},
+        {"type": "tool_execution_end", "toolCallId": "t1", "toolName": "bash", "result": "a.txt", "isError": False},
+        {"type": "turn_end"},
+        {"type": "turn_start"},
+        {"type": "message_start", "message": {"role": "assistant"}},
+        {"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": "done"}]}},
+        {"type": "turn_end"},
+    ]
+    fake = tmp_path / "pi"
+    fake.write_text("#!/bin/sh\ncat <<'EOF'\n" + "\n".join(json.dumps(e) for e in events) + "\nEOF\n")
+    fake.chmod(0o755)
+    spans = []
+
+    class Recorder:
+        def trace(self, name, tags=None, parent_span=None):
+            span = type("Span", (), {"set_tag": lambda self, k, v: self.tags.__setitem__(k, v)})()
+            span.name, span.tags = name, dict(tags or {})
+            spans.append(span)
+            return __import__("contextlib").nullcontext(span)
+
+    monkeypatch.setattr(pipeline.tracing, "tracer", Recorder())
+    assert pipeline.run_pi([str(fake)], "list files", tmp_path, None) == "done"
+    tool = next(s for s in spans if s.name == "haystack.agent.step.tool")
+    assert tool.tags["haystack.tool.name"] == "bash"
+    assert tool.tags["haystack.agent.step.tool.input"] == {"command": "ls"}
+    assert tool.tags["haystack.agent.step.tool.output"] == "a.txt"
+    assert [s.name for s in spans].count("haystack.agent.step") == 2
+    assert spans[0].tags["haystack.agent.output"] == "done"

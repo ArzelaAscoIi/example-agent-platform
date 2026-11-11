@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from haystack import Pipeline, component
+from haystack import Pipeline, component, tracing
 from haystack.dataclasses import ChatMessage
 
 NODE_VERSION = "v22.12.0"
@@ -61,6 +61,65 @@ def with_token(repo: str) -> str:
     return repo
 
 
+def text_of(message: dict) -> str:
+    return "".join(part.get("text", "") for part in message.get("content", []) if part.get("type") == "text")
+
+
+def run_pi(cmd: list[str], prompt: str, cwd: Path, env: dict) -> str:
+    """Runs pi in JSON mode and traces its run like a Haystack Agent: one step per pi turn, with the model reply
+    (haystack.agent.step.llm) and each tool call (haystack.agent.step.tool) as spans. Returns pi's last answer."""
+    spans: dict[str, tuple] = {}
+
+    def start(key: str, name: str, tags: dict) -> None:
+        cm = tracing.tracer.trace(name, tags=tags)
+        spans[key] = (cm, cm.__enter__())
+
+    def end(key: str, tags: dict | None = None) -> None:
+        if key in spans:
+            cm, span = spans.pop(key)
+            for k, v in (tags or {}).items():
+                span.set_tag(k, v)
+            cm.__exit__(None, None, None)
+
+    answer = ""
+    start("run", "haystack.agent.run", {"haystack.component.name": "pi", "haystack.agent.input": prompt})
+    with tempfile.TemporaryFile("w+") as err:  # stderr to a file: a full pipe would block pi
+        proc = subprocess.Popen(cmd + ["--mode", "json"], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=err, text=True)
+        for line in proc.stdout:
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            kind, message = event.get("type"), event.get("message") or {}
+            if kind == "turn_start":
+                start("turn", "haystack.agent.step", {})
+            elif kind == "message_start" and message.get("role") == "assistant":
+                start("llm", "haystack.agent.step.llm", {"haystack.component.name": "llm"})
+            elif kind == "message_end" and message.get("role") == "assistant":
+                end("llm", {"haystack.agent.step.llm.output": message})
+                answer = text_of(message) or answer
+            elif kind == "tool_execution_start":
+                start(event["toolCallId"], "haystack.agent.step.tool",
+                      {"haystack.tool.name": event["toolName"], "haystack.component.name": event["toolName"],
+                       "haystack.agent.step.tool.input": event.get("args")})
+            elif kind == "tool_execution_end":
+                end(event["toolCallId"], {"haystack.agent.step.tool.output": event.get("result"),
+                                          "haystack.tool.error": bool(event.get("isError"))})
+            elif kind == "turn_end":
+                end("turn")
+        # ponytail: no own timeout; a plain request stops at 15 minutes and a durable run is cancellable.
+        proc.wait()
+        err.seek(0)
+        stderr = err.read()
+    for key in [k for k in spans if k != "run"]:
+        end(key)
+    end("run", {"haystack.agent.output": answer})
+    if proc.returncode:
+        raise RuntimeError(f"pi failed ({proc.returncode}):\n{stderr[-2000:]}")
+    return answer
+
+
 @component
 class PiAgent:
     @component.output_types(messages=list[ChatMessage])
@@ -77,7 +136,7 @@ class PiAgent:
         pi = [str(PI_BIN), "-p", prompt, "--provider", PI_PROVIDER, "--session-dir", str(work / ".pi-sessions")]
         if (work / ".pi-sessions").exists():
             pi.append("--continue")
-        answer = sh(pi, cwd=cwd, env=env, timeout=3600)
+        answer = run_pi(pi, prompt, cwd=cwd, env=env)
         return {"messages": [ChatMessage.from_assistant(answer.strip())]}
 
 

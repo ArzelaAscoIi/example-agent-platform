@@ -4,7 +4,7 @@ This repo runs the pi coding agent (https://pi.dev) as a service on the Haystack
 
 ## Files
 
-- `pipeline.py`: the whole service. One `PiAgent` component: installs Node and pi on the pod, clones the repo from the query, runs `pi -p`.
+- `pipeline.py`: the whole service. One `PiAgent` component: installs Node and pi on the pod, clones the repo from the query, runs `pi -p --mode json` and turns its events into trace spans (one step per pi turn, the model reply and each tool call).
 - `pipeline.io.yaml`: service inputs, outputs and Python dependencies. Same basename as the pipeline, picked up by the CLI.
 - `test_pipeline.py`: offline tests with a fake `pi`.
 - `tools/mcp_call.py`: calls the platform MCP server from a shell.
