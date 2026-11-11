@@ -21,7 +21,9 @@ PI_BIN = HOME / ".pi-cli" / "bin" / "pi"
 
 
 def sh(cmd: list[str] | str, cwd: Path | None = None, timeout: int = 300, env: dict | None = None) -> str:
-    out = subprocess.run(cmd, shell=isinstance(cmd, str), cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout)
+    # stdin=DEVNULL: the platform worker reads its control frames (heartbeats) from stdin; a child that
+    # inherits it eats them and the worker is killed as hung after 60s.
+    out = subprocess.run(cmd, shell=isinstance(cmd, str), cwd=cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout)
     if out.returncode:
         raise RuntimeError(f"{cmd!r} failed ({out.returncode}):\n{out.stdout[-2000:]}{out.stderr[-2000:]}")
     return out.stdout
