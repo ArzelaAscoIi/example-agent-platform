@@ -19,7 +19,7 @@ Each request starts pi in a fresh directory. The agent has a shell and outbound 
    haystack-enterprise login
    ```
 2. Add workspace secrets (Settings → Secrets). The pipeline reads them as environment variables:
-   - `ANTHROPIC_API_KEY` (or any other provider key pi supports, e.g. `OPENAI_API_KEY`)
+   - `ANTHROPIC_API_KEY`. For another provider, add its key (e.g. `OPENAI_API_KEY`) and set the secret `PI_PROVIDER` (e.g. `openai`)
    - `GITLAB_TOKEN` (optional, a token with `read_repository`, plus `write_repository` if agents push)
 3. Try it in the sandbox, without deploying:
    ```sh
