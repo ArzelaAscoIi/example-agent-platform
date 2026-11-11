@@ -1,0 +1,20 @@
+components:
+  to_replies:
+    type: haystack.components.converters.output_adapter.OutputAdapter
+    init_parameters:
+      template: "{{ [query] }}"
+      output_type: List[str]
+  answer_builder:
+    type: haystack.components.builders.answer_builder.AnswerBuilder
+    init_parameters: {}
+connections:
+  - sender: to_replies.output
+    receiver: answer_builder.replies
+inputs:
+  query:
+    - to_replies.query
+    - answer_builder.query
+outputs:
+  answers: answer_builder.answers
+dependencies:
+  - haystack-ai==3.1.1

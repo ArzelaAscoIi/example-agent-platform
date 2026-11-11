@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "deepset": {
+      "type": "http",
+      "url": "https://api.cloud.deepset.ai/mcp",
+      "headers": { "Authorization": "Bearer ${DEEPSET_API_KEY}" }
+    }
+  }
+}

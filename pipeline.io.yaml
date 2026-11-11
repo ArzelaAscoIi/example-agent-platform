@@ -1,0 +1,8 @@
+inputs:
+  query:
+    - pi.query
+outputs:
+  messages: pi.messages
+pipeline_output_type: chat
+dependencies:
+  - haystack-ai==3.1.1
