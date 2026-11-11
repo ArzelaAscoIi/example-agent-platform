@@ -15,13 +15,17 @@ from haystack.dataclasses import ChatMessage
 
 NODE_VERSION = "v22.12.0"
 PI_VERSION = "0.73.1"
+# The provider whose key pi uses (a workspace secret, e.g. ANTHROPIC_API_KEY).
+PI_PROVIDER = os.environ.get("PI_PROVIDER", "anthropic")
 HOME = Path.home()
 NODE_DIR = HOME / f"node-{NODE_VERSION}-linux-x64"
 PI_BIN = HOME / ".pi-cli" / "bin" / "pi"
 
 
 def sh(cmd: list[str] | str, cwd: Path | None = None, timeout: int = 300, env: dict | None = None) -> str:
-    out = subprocess.run(cmd, shell=isinstance(cmd, str), cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout)
+    # stdin=DEVNULL: the platform worker reads its control frames (heartbeats) from stdin; a child that
+    # inherits it eats them and the worker is killed as hung after 60s.
+    out = subprocess.run(cmd, shell=isinstance(cmd, str), cwd=cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout)
     if out.returncode:
         raise RuntimeError(f"{cmd!r} failed ({out.returncode}):\n{out.stdout[-2000:]}{out.stderr[-2000:]}")
     return out.stdout
@@ -29,7 +33,9 @@ def sh(cmd: list[str] | str, cwd: Path | None = None, timeout: int = 300, env: d
 
 def ensure_pi() -> dict:
     """Node and pi, installed once per pod (the runtime image has neither). Returns the env pi runs with."""
-    env = {**os.environ, "PATH": f"{NODE_DIR / 'bin'}:{PI_BIN.parent}:{os.environ.get('PATH', '')}"}
+    # No AWS_*: pi would use the pod's own AWS role for Bedrock, whatever --provider says.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("AWS_")}
+    env["PATH"] = f"{NODE_DIR / 'bin'}:{PI_BIN.parent}:{os.environ.get('PATH', '')}"
     if not (NODE_DIR / "bin" / "node").exists():
         sh(f"curl -sSL https://nodejs.org/dist/{NODE_VERSION}/node-{NODE_VERSION}-linux-x64.tar.xz | tar -xJ -C {HOME}")
     if not PI_BIN.exists():
@@ -63,7 +69,7 @@ class PiAgent:
         if repo:
             sh(["git", "clone", "--depth", "1", with_token(repo), str(work / "repo")], env=env)
             work = work / "repo"
-        answer = sh([str(PI_BIN), "-p", prompt, "--no-session"], cwd=work, env=env, timeout=3600)
+        answer = sh([str(PI_BIN), "-p", prompt, "--no-session", "--provider", PI_PROVIDER], cwd=work, env=env, timeout=3600)
         return {"messages": [ChatMessage.from_assistant(answer.strip())]}
 
 

@@ -28,3 +28,12 @@ def test_gitlab_token(monkeypatch):
     monkeypatch.setenv("GITLAB_TOKEN", "t0k")
     assert pipeline.with_token("https://gitlab.com/g/p.git") == "https://oauth2:t0k@gitlab.com/g/p.git"
     assert pipeline.with_token("https://github.com/g/p.git") == "https://github.com/g/p.git"
+
+
+def test_pi_never_sees_the_pods_aws_role(monkeypatch, tmp_path):
+    monkeypatch.setenv("AWS_WEB_IDENTITY_TOKEN_FILE", "/var/run/token")
+    monkeypatch.setattr(pipeline, "NODE_DIR", tmp_path)
+    monkeypatch.setattr(pipeline, "PI_BIN", tmp_path)  # exists, so nothing is installed
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "node").touch()
+    assert not any(k.startswith("AWS_") for k in pipeline.ensure_pi())

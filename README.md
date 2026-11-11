@@ -9,6 +9,7 @@ Each request starts pi in a fresh directory. The agent has a shell and outbound 
 | `pipeline.py` | The pipeline: one `PiAgent` component that runs `pi -p <prompt>` |
 | `pipeline.io.yaml` | Inputs, outputs and Python dependencies of the service |
 | `test_pipeline.py` | Offline test with a fake `pi` |
+| `examples/echo-gateway/pipeline.yaml` | Smallest possible service: returns the query as the answer, no model or secret needed |
 
 ## Run it
 
@@ -18,7 +19,7 @@ Each request starts pi in a fresh directory. The agent has a shell and outbound 
    haystack-enterprise login
    ```
 2. Add workspace secrets (Settings → Secrets). The pipeline reads them as environment variables:
-   - `ANTHROPIC_API_KEY` (or any other provider key pi supports, e.g. `OPENAI_API_KEY`)
+   - `ANTHROPIC_API_KEY`. For another provider, add its key (e.g. `OPENAI_API_KEY`) and set the secret `PI_PROVIDER` (e.g. `openai`)
    - `GITLAB_TOKEN` (optional, a token with `read_repository`, plus `write_repository` if agents push)
 3. Try it in the sandbox, without deploying:
    ```sh
@@ -32,6 +33,22 @@ Each request starts pi in a fresh directory. The agent has a shell and outbound 
    ```json
    {"prompt": "Run the tests and fix the first failure", "repo": "https://gitlab.com/group/project.git"}
    ```
+
+## Smallest service first
+
+To check your workspace and key work before adding pi, deploy the echo example and send it a query:
+
+```sh
+export API_KEY=$DEEPSET_API_KEY
+haystack-enterprise deploy examples/echo-gateway/pipeline.yaml echo-gateway --workspace-name "$DEEPSET_WORKSPACE"
+```
+
+The deploy prints the model name `<workspace>/<service id>`. Query the service with its id; the answer is your query:
+
+```sh
+curl -X POST "https://api.cloud.deepset.ai/api/v1/workspaces/$DEEPSET_WORKSPACE/deployments/<service id>/search" \
+  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"queries": ["hello"]}'
+```
 
 ## Long runs
 
