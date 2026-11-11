@@ -63,6 +63,22 @@ def text_of(message: dict) -> str:
     return "".join(part.get("text", "") for part in message.get("content", []) if part.get("type") == "text")
 
 
+def llm_output(message: dict) -> dict:
+    """pi's reply in the shape of a Haystack chat generator's output, which the platform reads token usage
+    and cost from: replies[].meta.model and replies[].meta.usage (Anthropic's names; pi reports cache apart)."""
+    usage = message.get("usage") or {}
+    meta = {
+        "model": f"{message.get('provider')}/{message.get('model')}",
+        "usage": {
+            "input_tokens": usage.get("input", 0),
+            "output_tokens": usage.get("output", 0),
+            "cache_read_input_tokens": usage.get("cacheRead", 0),
+            "cache_creation_input_tokens": usage.get("cacheWrite", 0),
+        },
+    }
+    return {"replies": [{"role": "assistant", "content": message.get("content"), "meta": meta}]}
+
+
 def run_pi(cmd: list[str], prompt: str, cwd: Path, env: dict) -> str:
     """Runs pi in JSON mode and traces its run like a Haystack Agent: one step per pi turn, with the model reply
     (haystack.agent.step.llm) and each tool call (haystack.agent.step.tool) as spans. Returns pi's last answer."""
@@ -95,7 +111,7 @@ def run_pi(cmd: list[str], prompt: str, cwd: Path, env: dict) -> str:
             elif kind == "message_start" and message.get("role") == "assistant":
                 start("llm", "haystack.agent.step.llm", {"haystack.component.name": "llm"})
             elif kind == "message_end" and message.get("role") == "assistant":
-                end("llm", {"haystack.agent.step.llm.output": message})
+                end("llm", {"haystack.agent.step.llm.output": llm_output(message)})
                 answer = text_of(message) or answer
             elif kind == "tool_execution_start":
                 start(event["toolCallId"], "haystack.agent.step.tool",

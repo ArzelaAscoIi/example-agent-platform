@@ -65,7 +65,9 @@ def test_tool_calls_become_agent_spans(tmp_path, monkeypatch):
     events = [
         {"type": "turn_start"},
         {"type": "message_start", "message": {"role": "assistant"}},
-        {"type": "message_end", "message": {"role": "assistant", "content": [{"type": "toolCall", "name": "bash"}]}},
+        {"type": "message_end", "message": {"role": "assistant", "content": [{"type": "toolCall", "name": "bash"}],
+                                            "provider": "anthropic", "model": "claude-sonnet-4-5",
+                                            "usage": {"input": 10, "output": 5, "cacheRead": 100, "cacheWrite": 0}}},
         {"type": "tool_execution_start", "toolCallId": "t1", "toolName": "bash", "args": {"command": "ls"}},
         {"type": "tool_execution_end", "toolCallId": "t1", "toolName": "bash", "result": "a.txt", "isError": False},
         {"type": "turn_end"},
@@ -94,6 +96,11 @@ def test_tool_calls_become_agent_spans(tmp_path, monkeypatch):
     assert tool.tags["haystack.agent.step.tool.output"] == "a.txt"
     assert [s.name for s in spans].count("haystack.agent.step") == 2
     assert spans[0].tags["haystack.agent.output"] == "done"
+    llm = next(s for s in spans if s.name == "haystack.agent.step.llm")
+    meta = llm.tags["haystack.agent.step.llm.output"]["replies"][0]["meta"]
+    assert meta["model"] == "anthropic/claude-sonnet-4-5"
+    assert meta["usage"] == {"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 100,
+                             "cache_creation_input_tokens": 0}
 
 
 def test_refuses_to_run_without_the_api_key(monkeypatch):
