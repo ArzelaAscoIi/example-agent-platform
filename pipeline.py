@@ -1,7 +1,8 @@
 """One pi coding agent (https://pi.dev) as a Haystack pipeline.
 
 Query: plain text (the prompt), or JSON {"prompt": "...", "repo": "https://gitlab.com/group/project.git"}.
-The agent runs in a fresh directory with shell and outbound network; with "repo" it starts in a clone.
+The agent has a shell and outbound network; with "repo" it works in a clone. Submitted as a durable run with a
+session_id, the clone and the conversation are kept for the next request on that session_id.
 """
 
 import json
@@ -17,9 +18,10 @@ NODE_VERSION = "v22.12.0"
 PI_VERSION = "0.73.1"
 # The provider whose key pi uses (a workspace secret, e.g. ANTHROPIC_API_KEY).
 PI_PROVIDER = os.environ.get("PI_PROVIDER", "anthropic")
-HOME = Path.home()
-NODE_DIR = HOME / f"node-{NODE_VERSION}-linux-x64"
-PI_BIN = HOME / ".pi-cli" / "bin" / "pi"
+# Outside HOME: on session runs HOME is the session workspace, which is saved to S3 after every run.
+TOOLS = Path(tempfile.gettempdir()) / "pi-tools"
+NODE_DIR = TOOLS / f"node-{NODE_VERSION}-linux-x64"
+PI_BIN = TOOLS / ".pi-cli" / "bin" / "pi"
 
 
 def sh(cmd: list[str] | str, cwd: Path | None = None, timeout: int = 300, env: dict | None = None) -> str:
@@ -37,7 +39,8 @@ def ensure_pi() -> dict:
     env = {k: v for k, v in os.environ.items() if not k.startswith("AWS_")}
     env["PATH"] = f"{NODE_DIR / 'bin'}:{PI_BIN.parent}:{os.environ.get('PATH', '')}"
     if not (NODE_DIR / "bin" / "node").exists():
-        sh(f"curl -sSL https://nodejs.org/dist/{NODE_VERSION}/node-{NODE_VERSION}-linux-x64.tar.xz | tar -xJ -C {HOME}")
+        TOOLS.mkdir(parents=True, exist_ok=True)
+        sh(f"curl -sSL https://nodejs.org/dist/{NODE_VERSION}/node-{NODE_VERSION}-linux-x64.tar.xz | tar -xJ -C {TOOLS}")
     if not PI_BIN.exists():
         sh(["npm", "install", "-g", "--prefix", str(PI_BIN.parent.parent), f"@mariozechner/pi-coding-agent@{PI_VERSION}"], env=env)
     return env
@@ -65,11 +68,16 @@ class PiAgent:
         prompt, repo = parse(query)
         env = ensure_pi()
         # ponytail: fresh temp dir per run, lost when the pod restarts. Keep state that must survive behind an API.
-        work = Path(tempfile.mkdtemp(prefix="pi-"))
-        if repo:
-            sh(["git", "clone", "--depth", "1", with_token(repo), str(work / "repo")], env=env)
-            work = work / "repo"
-        answer = sh([str(PI_BIN), "-p", prompt, "--no-session", "--provider", PI_PROVIDER], cwd=work, env=env, timeout=3600)
+        # A durable run with a session_id gets HAYSTACK_SESSION_WORKSPACE: restored before the run, saved after it.
+        # The clone and pi's transcript live there, so a follow-up on the same session_id continues where this one stopped.
+        work = Path(os.environ.get("HAYSTACK_SESSION_WORKSPACE") or tempfile.mkdtemp(prefix="pi-"))
+        if repo and not (work / "repo").exists():
+            sh(["git", "clone", with_token(repo), str(work / "repo")], env=env)
+        cwd = work / "repo" if (work / "repo").exists() else work
+        pi = [str(PI_BIN), "-p", prompt, "--provider", PI_PROVIDER, "--session-dir", str(work / ".pi-sessions")]
+        if (work / ".pi-sessions").exists():
+            pi.append("--continue")
+        answer = sh(pi, cwd=cwd, env=env, timeout=3600)
         return {"messages": [ChatMessage.from_assistant(answer.strip())]}
 
 

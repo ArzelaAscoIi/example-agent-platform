@@ -8,7 +8,7 @@ import pipeline
 
 def test_runs_pi_in_a_clone(tmp_path, monkeypatch):
     fake = tmp_path / "pi"
-    fake.write_text('#!/bin/sh\necho "cwd=$(basename "$PWD") prompt=$2"\n')
+    fake.write_text('#!/bin/sh\nmkdir -p "$6"\necho "cwd=$(basename "$PWD") prompt=$2 $7"\n')
     fake.chmod(0o755)
     monkeypatch.setattr(pipeline, "PI_BIN", fake)
     monkeypatch.setattr(pipeline, "ensure_pi", lambda: None)
@@ -37,3 +37,22 @@ def test_pi_never_sees_the_pods_aws_role(monkeypatch, tmp_path):
     (tmp_path / "bin").mkdir()
     (tmp_path / "bin" / "node").touch()
     assert not any(k.startswith("AWS_") for k in pipeline.ensure_pi())
+
+
+def test_follow_up_on_a_session_continues_in_the_same_clone(tmp_path, monkeypatch):
+    fake = tmp_path / "pi"
+    fake.write_text('#!/bin/sh\nmkdir -p "$6"\ntouch made-by-pi\necho "prompt=$2 $7"\n')
+    fake.chmod(0o755)
+    monkeypatch.setattr(pipeline, "PI_BIN", fake)
+    monkeypatch.setattr(pipeline, "ensure_pi", lambda: None)
+    monkeypatch.setenv("HAYSTACK_SESSION_WORKSPACE", str(tmp_path / "session"))
+    (tmp_path / "session").mkdir()
+    src = tmp_path / "src"
+    src.mkdir()
+    subprocess.run("git init -q && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init", shell=True, cwd=src, check=True)
+
+    first = pipeline.PiAgent().run(json.dumps({"prompt": "build it", "repo": str(src)}))
+    assert first["messages"][0].text == "prompt=build it"
+    second = pipeline.PiAgent().run(json.dumps({"prompt": "adjust it", "repo": str(src)}))
+    assert second["messages"][0].text == "prompt=adjust it --continue"
+    assert (tmp_path / "session" / "repo" / "made-by-pi").exists()  # same clone, not re-cloned

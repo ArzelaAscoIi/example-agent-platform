@@ -50,13 +50,23 @@ curl -X POST "https://api.cloud.deepset.ai/api/v1/workspaces/$DEEPSET_WORKSPACE/
   -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" -d '{"queries": ["hello"]}'
 ```
 
+## Chat sessions (durable)
+
+Submit each request as a durable run with a `session_id`. The run survives a pod restart, and its session workspace (the repo clone and pi's conversation) is saved after every run and restored on the next run with the same `session_id`, on any pod. A chat that lets users build and adjust a UI sends every message of one conversation with the same `session_id`:
+
+```sh
+python tools/durable_run.py ui-42 '{"prompt": "Create web/index.html with a hello page", "repo": "https://gitlab.com/group/project.git"}'
+python tools/durable_run.py ui-42 "Make the heading blue"   # same clone, pi remembers the first request
+```
+
+The first request clones `repo`; follow-ups work in that clone (sending `repo` again is fine, it is not cloned twice). A new `session_id` starts clean. Under the hood: `POST .../deployments/<service id>/executions` with `{"query": ..., "session_id": ...}` and an `Idempotency-Key` header, then `GET .../executions/<execution_id>` until `status` is `completed`. See [Use durable runs](https://docs.cloud.deepset.ai/docs/use-durable-runs).
 ## Long runs
 
 A plain request is cut off after 15 minutes. For longer agent runs, submit the query as a durable run: it survives a pod restart and starts again on a new pod. See [Use durable runs](https://docs.cloud.deepset.ai/docs/use-durable-runs). A service schedule (cron) can start runs on a timer.
 
 ## Limits
 
-- Files on disk are lost when a run restarts on a new pod. Keep state that must survive (results, agent-to-agent messages) behind an API.
+- Without a `session_id`, files on disk are lost when the run ends. Keep state other services need (results, agent-to-agent messages) behind an API.
 - One request runs one agent. For Dev, Ops and Tester agents, deploy one service each, or put the role in the prompt.
 - Pin a different pi or Node version in `pipeline.py` (`PI_VERSION`, `NODE_VERSION`).
 
